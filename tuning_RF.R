@@ -5,6 +5,9 @@
 
 
 rm(list=ls())
+
+PARALLEL=FALSE
+THRESHOLD=FALSE
 #setwd("H:\\Machine_Learning\\")
 #setwd("/projekte/sseifert/homes/Machine_Learning/RANDOM FOREST")
 
@@ -18,87 +21,26 @@ library(caret)
 library(doParallel)
 
 #=====================================================
-#=============== 3 FUNCTIONS DECLARATION =============
+#================= 2 INITIALIZATION ==================
 #=====================================================
-ids.bootstrap.do<-function(ratioGT,y,size){
-  ids <-1:length(y)
-  idsG<-ids[which(y=="GCR")]
-  idsL<-ids[which(y=="LWR")]
-  
-  idsG2<-sample(x = idsG,size = ceiling(ratioGT*size),replace = FALSE)
-  #idsL2<-sample(x = idsL,size = length(idsG),replace = FALSE) # 50/50 sampling
-  idsL2<-sample(x = idsL,size = size-ceiling(ratioGT*size),replace = FALSE)# ratioGT/(1-ratioGT) sampling
-  ids2<-c(idsG2,idsL2)
-  ids2
-}
-
+source("C:/Users/nlandry/Documents/Nicolas/05-Outages - with Stephan/R-codes/tuning_dataset.R")
 #=====================================================
-#=============== 4 LOAD OF THE DATASET ===============
+#================== 3 ANALYSIS =======================
 #=====================================================
-cat("load of the dataset \n")
-alldata=read.csv(file="Pris_data_all_with_outages_v12_nl.csv",sep=";")
-ids=which(alldata$type=="PWR"|alldata$type=="BWR")
-levels(alldata$type)=c(levels(alldata$type),"LWR")
-alldata$type[ids]="LWR"
-ids.japan=which(alldata$country=="JAPAN" & alldata$year>2010)
-alldata=alldata[-ids.japan,]
-
-colnames=c("type","year","planned_outages","t11","t12","t13","t14","t15","t16","t17","t21","t31","t32","t33","t35","t41","t42","t43")
-cnames=which(is.element(colnames(alldata),colnames))
-countries=c("FRANCE","GERMANY","JAPAN","SPAIN","SWITZERLAND","UNITED KINGDOM","UNITED STATES OF AMERICA")
-ids=which((alldata$type=="LWR"|alldata$type=="GCR") & alldata$country %in% countries)
-d=alldata[ids,c(cnames)]
-d$type=factor(d$type)
-d=na.omit(d)
-
-#Removal of zero year outages
-S<-rep(0,nrow(d))
-for(i in 1:nrow(d)){
-  S[i]=(sum(d[i,4:(ncol(d)-1)]))
-}
-d<-d[-which(S==0),]
-
-#normalisation
-for(r in 1:nrow(d)){
-  s=sum(d[r,4:ncol(d)])
-  if(d$year[r] %% 4 ==0){
-    for(c in 4:ncol(d)){
-      d[r,c]=d[r,c]/(8784-s+d[r,c])
-      if(d[r,c]=="NaN"){d[r,c] <-      0} 
-    }
-  }else{
-    for(c in 4:ncol(d)){
-      d[r,c]=d[r,c]/(8760-s+d[r,c])
-      if(d[r,c]=="NaN"){d[r,c] <-      0} 
-    }
-  }
-}
-
-d<-d[,-c(1,3)]
-rm(s,S,i,ids,cnames,ids.japan,countries,c,r)
-
-#=====================================================
-#================== 5 ANALYSIS =======================
-#=====================================================
-
 #PARALLEL PROCESSING
-max_cores <- detectCores()[1]
-max_cores
-if (max_cores > 25) max_cores <- 25
-cl <- makeCluster(max_cores, homogeneous=T)
-registerDoParallel(cl)
+if(PARALLEL) activate_parallel_mode(cores_limit = 7)
 
 
 seed=7
 set.seed(seed)
 
 tunegrid.up <- expand.grid(.ntree=2800,
-                        .mtry=seq(1,5,1),
-                        .classwt=seq(8,248,16),
-                        .maxnodes=seq(2,14,2),
-                        .sampsize=seq(50,1100,75),
-                        .ratio=c(1),
-                        .up=c(TRUE))
+                           .mtry=seq(1,5,1),
+                           .classwt=seq(8,248,16),
+                           .maxnodes=seq(2,14,2),
+                           .sampsize=seq(50,1100,75),
+                           .ratio=c(1),
+                           .up=c(TRUE))
 tunegrid.do <- expand.grid(.ntree=2800,
                            .mtry=seq(1,5,1),
                            .classwt=1,
@@ -114,86 +56,68 @@ k <- nrow(tunegrid)
 
 
 #### WITH FOREACH LOOP
-foreach(count=8401:k, .packages="randomForest")%dopar%{
-#for(count in 8401:k){
-  result<-list()
-  rep <- tunegrid[count,]
+foreach(count=1:k, .packages="randomForest")%dopar%{
+  #for(count in 8401:k){
+  param <- tunegrid[count,]
   
-  if(rep$.up){
-    oob_error <- matrix(NA, nrow=rep$.ntree,ncol=30)
-    gcr_error <- matrix(NA, nrow=rep$.ntree,ncol=30)
-    lwr_error <- matrix(NA, nrow=rep$.ntree,ncol=30)
+  tot_error <- matrix(NA, nrow=rep$.ntree,ncol=30)
+  gcr_error <- matrix(NA, nrow=rep$.ntree,ncol=30)
+  lwr_error <- matrix(NA, nrow=rep$.ntree,ncol=30)
+  
+  if(param$.up){
+    
     
     for (i in 1:30){
       cat(paste(count,",",i,"/n",sep = ""))
       rf <- randomForest(type~.,
                          data=d,
-                         ntree=rep$.ntree,
-                         mtry=rep$.mtry,
-                         classwt=c(rep$.classwt+1000,1000-rep$.classwt),
-                         sampsize=rep$.sampsize,
-                         maxnodes=rep$.maxnodes)$err.rate
-      oob_error[,i] <- rf[,1]
+                         ntree=param$.ntree,
+                         mtry=param$.mtry,
+                         classwt=c(param$.classwt+1000,1000-param$.classwt),
+                         sampsize=param$.sampsize,
+                         maxnodes=param$.maxnodes)$err.rate
+      tot_error[,i] <- rf[,1]
       gcr_error[,i] <- rf[,2]
       lwr_error[,i] <- rf[,3]
     }
     
-    oob_list <- rbind(apply(as.matrix(oob_error[seq(200,rep$.ntree,100),]),1,mean),
-                      apply(as.matrix(oob_error[seq(200,rep$.ntree,100),]),1,sd))
-    gcr_list <- rbind(apply(gcr_error[seq(200,rep$.ntree,100),],1,mean),
+    tot_stat <- rbind(apply(as.matrix(tot_error[seq(200,rep$.ntree,100),]),1,mean),
+                      apply(as.matrix(tot_error[seq(200,rep$.ntree,100),]),1,sd))
+    gcr_stat <- rbind(apply(gcr_error[seq(200,rep$.ntree,100),],1,mean),
                       apply(gcr_error[seq(200,rep$.ntree,100),],1,sd))
-    lwr_list <- rbind(apply(lwr_error[seq(200,rep$.ntree,100),],1,mean),
+    lwr_stat <- rbind(apply(lwr_error[seq(200,rep$.ntree,100),],1,mean),
                       apply(lwr_error[seq(200,rep$.ntree,100),],1,sd))
   }else{
-    oob_error <- matrix(NA, nrow=rep$.ntree,ncol=30)
-    gcr_error <- matrix(NA, nrow=rep$.ntree,ncol=30)
-    lwr_error <- matrix(NA, nrow=rep$.ntree,ncol=30)
+    
     
     for (i in 1:30){
       cat(paste(count,",",i,"/n",sep = ""))
       
       print("GCRs in the training set")
-      # ids.train.do=ids.bootstrap.do(y = d$type,ratioGT = rep$.ratio, size=rep$.sampsize)
-      # test.set=d[-ids.train.do,]
-      # train.set=d[ids.train.do,]
       
-      # for(s in 1:length(seq(200,rep$.ntree,100))){
-        
-        rf <- randomForest(type~.,data=d,
-                           ntree=rep$.ntree,
-                           mtry=rep$.mtry,
-                           classwt=c(1000,1000),
-                           #strata=as.factor(c("GCR","LWR")),
-                           strata=d$type,
-                           sampsize=c(ceiling(rep$.ratio*rep$.sampsize), rep$.sampsize-ceiling(rep$.ratio*rep$.sampsize)),
-                           maxnodes=rep$.maxnodes
-                           ,keep.inbag=T
-                           )$err.rate
-        oob_error[,i] <- rf[,1]
-        gcr_error[,i] <- rf[,2]
-        lwr_error[,i] <- rf[,3]
-        
-        # pred=predict(rf,test.set,type = "class")
-        # oob_error[s,i] <- length(which((pred=="LWR" & test.set$type=="GCR")|(pred=="GCR" & test.set$type=="LWR")))/length(pred)
-        # gcr_error[s,i] <- length(which(pred=="LWR" & test.set$type=="GCR"))/length(which(test.set$type=="GCR"))
-        # lwr_error[s,i] <- length(which(pred=="GCR" & test.set$type=="LWR"))/length(which(test.set$type=="LWR"))
+      rf <- randomForest(type~.,data=d,
+                         ntree=param$.ntree,
+                         mtry=param$.mtry,
+                         classwt=c(1000,1000),
+                         #strata=as.factor(c("GCR","LWR")),
+                         strata=d$type,
+                         sampsize=c(ceiling(param$.ratio*param$.sampsize), param$.sampsize-ceiling(param$.ratio*param$.sampsize)),
+                         maxnodes=param$.maxnodes
+                         ,keep.inbag=T
+      )$err.rate
+      tot_error[,i] <- rf[,1]
+      gcr_error[,i] <- rf[,2]
+      lwr_error[,i] <- rf[,3]
     }
-    oob_list <- rbind(apply(as.matrix(oob_error[seq(200,rep$.ntree,100),]),1,mean),
-                      apply(as.matrix(oob_error[seq(200,rep$.ntree,100),]),1,sd))
-    gcr_list <- rbind(apply(gcr_error[seq(200,rep$.ntree,100),],1,mean),
+    tot_stat <- rbind(apply(as.matrix(tot_error[seq(200,rep$.ntree,100),]),1,mean),
+                      apply(as.matrix(tot_error[seq(200,rep$.ntree,100),]),1,sd))
+    gcr_stat <- rbind(apply(gcr_error[seq(200,rep$.ntree,100),],1,mean),
                       apply(gcr_error[seq(200,rep$.ntree,100),],1,sd))
-    lwr_list <- rbind(apply(lwr_error[seq(200,rep$.ntree,100),],1,mean),
+    lwr_stat <- rbind(apply(lwr_error[seq(200,rep$.ntree,100),],1,mean),
                       apply(lwr_error[seq(200,rep$.ntree,100),],1,sd))
-    # oob_list <- rbind(apply(as.matrix(oob_error),1,mean),
-    #                   apply(as.matrix(oob_error),1,sd))
-    # gcr_list <- rbind(apply(gcr_error,1,mean),
-    #                   apply(gcr_error,1,sd))
-    # lwr_list <- rbind(apply(lwr_error,1,mean),
-    #                   apply(lwr_error,1,sd))
   }
   
-  result[[1]] <- rbind(oob_list,gcr_list,lwr_list)
-  result[[2]] <- rep
+  result <- list(rbind(tot_stat,gcr_stat,lwr_stat),param)
   
   #======================
   ## TO CHANGE
