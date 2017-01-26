@@ -5,12 +5,17 @@
 
 
 rm(list=ls())
-setwd("H:\\BOOSTING\\")
+#setwd("H:\\Machine_Learning\\")
+#setwd("/projekte/sseifert/homes/Machine_Learning")
 
+setwd("H:\\BOOSTING\\")
 #=====================================================
 #================= 1 LIBRARIES LOAD ==================
 #=====================================================
 library(adabag)
+library(fastAdaboost)
+library(mlbench)
+library(doParallel)
 
 #=====================================================
 #=============== 3 FUNCTIONS DECLARATION =============
@@ -42,7 +47,7 @@ ids.bootstrap.do<-function(ratioGT,y,size){
 #=============== 4 LOAD OF THE DATASET ===============
 #=====================================================
 cat("load of the dataset \n")
-alldata=read.csv(file="prisv11.csv",sep=";")
+alldata=read.csv(file="Pris_data_all_with_outages_v11_nl.csv",sep=";")
 ids=which(alldata$type=="PWR"|alldata$type=="BWR")
 levels(alldata$type)=c(levels(alldata$type),"LWR")
 alldata$type[ids]="LWR"
@@ -79,7 +84,6 @@ registerDoParallel(cl)
 seed=7
 set.seed(seed)
 
-#### WITH FOREACH LOOP
 tunegrid <- expand.grid(.minsplit=seq(3,100,20),
                         .minbucket=seq(1,20,5),
                         .cp=c(0.1,0.2,0.3),
@@ -91,6 +95,7 @@ k <- nrow(tunegrid)
 
 #### REMOVAL OF ALREADY COMPUTED RESULTS
 # from simulation A : 20
+j<-k
 SPLIT=1
 idsA=seq((SPLIT-1)*j/6+1,SPLIT*j/6)[1:20]
 # from simulation B : 19
@@ -104,12 +109,16 @@ SPLIT=4
 idsD=seq((SPLIT-1)*j/6+1,SPLIT*j/6)[1:42]
 
 ids.already=c(idsA,idsB,idsC,idsD)
-rm(idsA,idsB,idsC,idsD,SPLIT)
+rm(idsA,idsB,idsC,idsD,SPLIT,j)
 
-result<-list()
 
+start=list()
+stop=list()
+#### WITH FOREACH LOOP
 for(count in 1:k){
-  if(!(i %in% ids.already))
+  result<-list()
+  if(!(count %in% ids.already)){
+    
   rep     <- tunegrid[count,]
   
   control <- rpart.control(minsplit = rep$.minsplit,
@@ -131,9 +140,9 @@ for(count in 1:k){
     ids.train.up=ids.bootstrap.up(ids.train,d$type[ids.train],ratioGT = rep$.ratio)
     test.set=d[-ids.train.up,]
     train.set=d[ids.train.up,]
-    bo <-boosting(type~., data=train.set,mfinal=50,coeflearn = rep$.coeflearn,control = control)
     for(s in 1:5){
-      pred=predict(bo,test.set,type = "class",newmfinal = 10*s)
+    bo <-adaboost(type~., data=train.set,nIter=10*s,coeflearn = rep$.coeflearn,control = control)
+      pred=predict(bo,test.set,type = "class")
       oob_error[s,i] <- length(which((pred$class=="LWR" & test.set$type=="GCR")|(pred$class=="GCR" & test.set$type=="LWR")))/length(pred$class)
       gcr_error[s,i] <- length(which(pred$class=="LWR" & test.set$type=="GCR"))/length(which(test.set$type=="GCR"))
       lwr_error[s,i] <- length(which(pred$class=="GCR" & test.set$type=="LWR"))/length(which(test.set$type=="LWR"))
@@ -150,6 +159,7 @@ for(count in 1:k){
   
   #======================
   ## TO CHANGE
-  save(result,file = paste("A/boosting_output2_",count,".RData",sep=""))
+  save(result,file = paste("testadaboost",count,".RData",sep=""))
   #======================
+  }
 }
