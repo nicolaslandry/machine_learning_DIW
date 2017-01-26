@@ -9,11 +9,12 @@ rm(list=ls())
 #setwd("/projekte/sseifert/homes/Machine_Learning")
 
 setwd("H:\\CLASSIFICATION\\")
+dir.create("2- RESULTS",showWarnings = FALSE)
 #=====================================================
 #================= 1 LIBRARIES LOAD ==================
 #=====================================================
 library(rpart)
-library(doParallel)
+library(pROC)
 
 #=====================================================
 #=============== 2 FUNCTIONS DECLARATION =============
@@ -45,14 +46,14 @@ ids.bootstrap.do<-function(ratioGT,y,size){
 #=============== 3 LOAD OF THE DATASET ===============
 #=====================================================
 cat("load of the dataset \n")
-alldata=read.csv(file="Pris_data_all_with_outages_v11_nl.csv",sep=";")
+alldata=read.csv(file="Pris_data_all_with_outages_v12_nl.csv",sep=";")
 ids=which(alldata$type=="PWR"|alldata$type=="BWR")
 levels(alldata$type)=c(levels(alldata$type),"LWR")
 alldata$type[ids]="LWR"
 ids.japan=which(alldata$country=="JAPAN" & alldata$year>2010)
 alldata=alldata[-ids.japan,]
 
-colnames=c("type","t11","t12","t13","t14","t15","t16","t17","t21","t31","t32","t33","t35","t41","t42","t43")
+colnames=c("type","year","planned_outages","t11","t12","t13","t14","t15","t16","t17","t21","t31","t32","t33","t35","t41","t42","t43")
 cnames=which(is.element(colnames(alldata),colnames))
 countries=c("FRANCE","GERMANY","JAPAN","SPAIN","SWITZERLAND","UNITED KINGDOM","UNITED STATES OF AMERICA")
 ids=which((alldata$type=="LWR"|alldata$type=="GCR") & alldata$country %in% countries)
@@ -63,10 +64,28 @@ d=na.omit(d)
 #Removal of zero year outages
 S<-rep(0,nrow(d))
 for(i in 1:nrow(d)){
-  S[i]=(sum(d[i,2:(ncol(d)-1)]))
+  S[i]=(sum(d[i,4:(ncol(d)-1)]))
 }
 d<-d[-which(S==0),]
-rm(S,i,ids,cnames,ids.japan,countries)
+
+#normalisation
+for(r in 1:nrow(d)){
+  s=sum(d[r,4:ncol(d)])
+  if(d$year[r] %% 4 ==0){
+    for(c in 4:ncol(d)){
+      d[r,c]=d[r,c]/(8784-s+d[r,c])
+      if(d[r,c]=="NaN"){d[r,c] <-      0} 
+    }
+  }else{
+    for(c in 4:ncol(d)){
+      d[r,c]=d[r,c]/(8760-s+d[r,c])
+      if(d[r,c]=="NaN"){d[r,c] <-      0} 
+    }
+  }
+}
+
+d<-d[,-c(1,3)]
+rm(s,S,i,ids,cnames,ids.japan,countries,c,r)
 
 #=====================================================
 #================== 4 ANALYSIS =======================
@@ -99,7 +118,8 @@ rm(tunegrid.do,tunegrid.up)
 k <- nrow(tunegrid)
 
 
-foreach(count=1:k, .packages=c("randomForest","rpart"))%dopar%{
+#foreach(count=1:k, .packages=c("randomForest","rpart"))%dopar%{
+for(count in 1:k){
   result<-list()
   rep     <- tunegrid[count,]
   
@@ -131,9 +151,19 @@ foreach(count=1:k, .packages=c("randomForest","rpart"))%dopar%{
     
     ct <- rpart(type~., data=train.set, control = control)
     pred=predict(ct,test.set,type = "class")
-    oob_error[1,i] <- length(which((pred=="LWR" & test.set$type=="GCR")|(pred=="GCR" & test.set$type=="LWR")))/length(pred)
-    gcr_error[1,i] <- length(which(pred=="LWR" & test.set$type=="GCR"))/length(which(test.set$type=="GCR"))
-    lwr_error[1,i] <- length(which(pred=="GCR" & test.set$type=="LWR"))/length(which(test.set$type=="LWR"))
+    
+    # optimal t to split
+    analysis <- roc(response=test.set$type, predictor=pred)
+    e <- cbind(analysis$thresholds,analysis$sensitivities*analysis$specificities)
+    opt_t <- subset(e,e[,2]==max(e[,2]))[,1]
+    
+    oob_error[1,i] <- length(which((pred>opt_t & test.set$type=="GCR")|(pred<opt_t & test.set$type=="LWR")))/length(pred)
+    gcr_error[1,i] <- length(which(pred>opt_t & test.set$type=="GCR"))/length(which(test.set$type=="GCR"))
+    lwr_error[1,i] <- length(which(pred<opt_t & test.set$type=="LWR"))/length(which(test.set$type=="LWR"))
+    
+    #oob_error[1,i] <- length(which((pred=="LWR" & test.set$type=="GCR")|(pred=="GCR" & test.set$type=="LWR")))/length(pred)
+    #gcr_error[1,i] <- length(which(pred=="LWR" & test.set$type=="GCR"))/length(which(test.set$type=="GCR"))
+    #lwr_error[1,i] <- length(which(pred=="GCR" & test.set$type=="LWR"))/length(which(test.set$type=="LWR"))
   }
   
   oob_list <- rbind(apply(as.matrix(oob_error),1,mean),
@@ -148,6 +178,6 @@ foreach(count=1:k, .packages=c("randomForest","rpart"))%dopar%{
   
   #======================
   ## TO CHANGE
-  save(result,file = paste("CT_output/CT_output_",count,".RData",sep=""))
+  save(result,file = paste("2- RESULTS/CT_output_",count,".RData",sep=""))
   #======================
 }
