@@ -9,6 +9,8 @@ rm(list=ls())
 #setwd("/projekte/sseifert/homes/Machine_Learning")
 
 setwd("H:\\BOOSTING\\")
+
+dir.create("2- RESULTS",showWarnings = FALSE)
 #lib <- .libPaths()
 #.libPaths("/projekte/sseifert/homes/Machine_Learning/packages")
 #install.packages("fastAdaboost",
@@ -35,16 +37,15 @@ ids.bootstrap.up<-function(ids,ratioGT,y){
   ids2
 }
 
-ids.bootstrap.do<-function(ratioGT,y,size){
+ids.bootstrap.do<-function(y,ratioGT,size){
   ids <-1:length(y)
   idsG<-ids[which(y=="GCR")]
   idsL<-ids[which(y=="LWR")]
   
-  idsG2<-sample(x = idsG,size = size/2,replace = FALSE)
-  idsL2<-sample(x = idsL,size = size/2,replace = FALSE)
-  print(idsG2)
+  idsG2<-sample(x = idsG,size = ceiling(ratioGT*size),replace = FALSE)
+  #idsL2<-sample(x = idsL,size = length(idsG),replace = FALSE) # 50/50 sampling
+  idsL2<-sample(x = idsL,size = size-ceiling(ratioGT*size),replace = FALSE)# ratioGT/(1-ratioGT) sampling
   ids2<-c(idsG2,idsL2)
-  #print(length(idsG2)/length(ids2))
   ids2
 }
 
@@ -88,7 +89,7 @@ for(r in 1:nrow(d)){
   }
 }
 d<-d[,-c(1,3)]
-rm(s,S,i,ids,cnames,ids.japan,countries)
+rm(c,r,s,S,i,ids,cnames,ids.japan,countries)
 
 #=====================================================
 #================== 4 ANALYSIS =======================
@@ -104,17 +105,26 @@ registerDoParallel(cl)
 seed=7
 set.seed(seed)
 
-tunegrid <- expand.grid(.minsplit=c(3,6,9),
+tunegrid.up <- expand.grid(.minsplit=c(3,6,9),
                         .minbucket=seq(1,20,5),
                         .cp=c(0.01,0.05,0.1),
                         .tsetsize=c(300,600,900,1200),
                         .ratio=c(0.5,0.6),
                         .coeflearn=c("Breiman"),
-                        .up=c("TRUE","FALSE"))
+                        .up=c(TRUE))
+tunegrid.do <- expand.grid(.minsplit=c(3,6,9),
+                           .minbucket=seq(1,20,5),
+                           .cp=c(0.01,0.05,0.1),
+                           .tsetsize=c(50,100,150,200),
+                           .ratio=c(0.5,0.6),
+                           .coeflearn=c("Breiman"),
+                           .up=c(FALSE))
+tunegrid.do <- tunegrid.do[(tunegrid.do$.ratio*tunegrid.do$.tsetsize)<sum(d$type=="GCR"),]
+tunegrid <- rbind(tunegrid.up,tunegrid.do)
 k <- nrow(tunegrid)
 
 
-
+rm(tunegrid.do,tunegrid.up)
 
 
 
@@ -138,7 +148,6 @@ foreach(count=1:k, .packages=c("adabag","fastAdaboost","rpart"))%dopar%{
       ids.train=sample(1:nrow(d),size = rep$.tsetsize,replace = F)
       if(length(which(d$type[ids.train]=="GCR"))>0) error =0
     }
-    print("GCRs in the training set")
     if(rep$.up){    
       ids.train.up=ids.bootstrap.up(ids.train,d$type[ids.train],ratioGT = rep$.ratio)
       test.set=d[-ids.train.up,]
@@ -170,6 +179,6 @@ foreach(count=1:k, .packages=c("adabag","fastAdaboost","rpart"))%dopar%{
   
   #======================
   ## TO CHANGE
-  save(result,file = paste("BO_output/boosting_output3_",count,".RData",sep=""))
+  save(result,file = paste("2- RESULTS/BO_output_",count,".RData",sep=""))
   #======================
 }
