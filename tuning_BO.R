@@ -1,6 +1,6 @@
 ## TUNING BOOSTING
 ## NICOLAS LANDRY  created the 15/12/2016
-## LAST MODIFICATION: 11/01/2017
+## LAST MODIFICATION: 12/01/2017
 ##OBJECTIVE: How to improve result from bo?
 
 
@@ -9,16 +9,21 @@ rm(list=ls())
 #setwd("/projekte/sseifert/homes/Machine_Learning")
 
 setwd("H:\\BOOSTING\\")
+#lib <- .libPaths()
+#.libPaths("/projekte/sseifert/homes/Machine_Learning/packages")
+#install.packages("fastAdaboost",
+#lib="/projekte/sseifert/homes/Machine_Learning",
+#                 repos="http://cran.ms.unimelb.edu.au/",dependencies=TRUE)
 #=====================================================
 #================= 1 LIBRARIES LOAD ==================
 #=====================================================
-library(adabag)
-library(fastAdaboost)
-library(mlbench)
+#library(adabag)
 library(doParallel)
+library(fastAdaboost)
+library(rpart)
 
 #=====================================================
-#=============== 3 FUNCTIONS DECLARATION =============
+#=============== 2 FUNCTIONS DECLARATION =============
 #=====================================================
 ids.bootstrap.up<-function(ids,ratioGT,y){
   idsG<-ids[which(y=="GCR")]
@@ -44,7 +49,7 @@ ids.bootstrap.do<-function(ratioGT,y,size){
 }
 
 #=====================================================
-#=============== 4 LOAD OF THE DATASET ===============
+#=============== 3 LOAD OF THE DATASET ===============
 #=====================================================
 cat("load of the dataset \n")
 alldata=read.csv(file="Pris_data_all_with_outages_v11_nl.csv",sep=";")
@@ -71,7 +76,7 @@ d<-d[-which(S==0),]
 rm(S,i,ids,cnames,ids.japan,countries)
 
 #=====================================================
-#================== 5 ANALYSIS =======================
+#================== 4 ANALYSIS =======================
 #=====================================================
 
 #PARALLEL PROCESSING
@@ -84,50 +89,33 @@ registerDoParallel(cl)
 seed=7
 set.seed(seed)
 
-tunegrid <- expand.grid(.minsplit=seq(3,100,20),
+tunegrid <- expand.grid(.minsplit=c(3,6,9),
                         .minbucket=seq(1,20,5),
-                        .cp=c(0.1,0.2,0.3),
-                        .tsetsize=seq(300,1100,100),
-                        .ratio=0.5,
-                        .coeflearn=c("Breiman","Freund"))
+                        .cp=c(0.01,0.05,0.1),
+                        .tsetsize=c(300,600,900,1200),
+                        .ratio=c(0.5,0.6),
+                        .coeflearn=c("Breiman"),
+                        .up=c("TRUE","FALSE"))
 k <- nrow(tunegrid)
 
 
-#### REMOVAL OF ALREADY COMPUTED RESULTS
-# from simulation A : 20
-j<-k
-SPLIT=1
-idsA=seq((SPLIT-1)*j/6+1,SPLIT*j/6)[1:20]
-# from simulation B : 19
-SPLIT=2
-idsB=seq((SPLIT-1)*j/6+1,SPLIT*j/6)[1:19]
-# from simulation C : 1
-SPLIT=3
-idsC=seq((SPLIT-1)*j/6+1,SPLIT*j/6)[1:1]
-# from simulation D : 42
-SPLIT=4
-idsD=seq((SPLIT-1)*j/6+1,SPLIT*j/6)[1:42]
-
-ids.already=c(idsA,idsB,idsC,idsD)
-rm(idsA,idsB,idsC,idsD,SPLIT,j)
 
 
-start=list()
-stop=list()
-#### WITH FOREACH LOOP
-for(count in 1:k){
+
+
+
+
+foreach(count=1:k, .packages=c("fastAdaboost","rpart"))%dopar%{
   result<-list()
-  if(!(count %in% ids.already)){
-    
   rep     <- tunegrid[count,]
   
   control <- rpart.control(minsplit = rep$.minsplit,
                            minbucket = rep$.minbucket,
                            cp = rep$.cp)
   
-  oob_error <- matrix(NA, nrow=5,ncol=30)
-  gcr_error <- matrix(NA, nrow=5,ncol=30)
-  lwr_error <- matrix(NA, nrow=5,ncol=30)
+  oob_error <- matrix(NA, nrow=3,ncol=30); rownames(oob_error)=c("40trees","50trees","60trees")
+  gcr_error <- matrix(NA, nrow=3,ncol=30); rownames(oob_error)=c("40trees","50trees","60trees")
+  lwr_error <- matrix(NA, nrow=3,ncol=30); rownames(oob_error)=c("40trees","50trees","60trees")
   
   for (i in 1:30){
     print(paste(count,",",i))
@@ -137,15 +125,21 @@ for(count in 1:k){
       if(length(which(d$type[ids.train]=="GCR"))>0) error =0
     }
     print("GCRs in the training set")
-    ids.train.up=ids.bootstrap.up(ids.train,d$type[ids.train],ratioGT = rep$.ratio)
-    test.set=d[-ids.train.up,]
-    train.set=d[ids.train.up,]
-    for(s in 1:5){
-    bo <-adaboost(type~., data=train.set,nIter=10*s,coeflearn = rep$.coeflearn,control = control)
+    if(rep$.up){    
+      ids.train.up=ids.bootstrap.up(ids.train,d$type[ids.train],ratioGT = rep$.ratio)
+      test.set=d[-ids.train.up,]
+      train.set=d[ids.train.up,]
+    }else{
+      ids.train.do=ids.bootstrap.do(d$type,ratioGT = rep$.ratio, size=rep$.tsetsize)
+      test.set=d[-ids.train.do,]
+      train.set=d[ids.train.do,]
+    }
+    for(s in 4:6){
+      bo <-adaboost(type~., data=train.set,nIter=10*s, coeflearn = rep$.coeflearn,control = control)
       pred=predict(bo,test.set,type = "class")
-      oob_error[s,i] <- length(which((pred$class=="LWR" & test.set$type=="GCR")|(pred$class=="GCR" & test.set$type=="LWR")))/length(pred$class)
-      gcr_error[s,i] <- length(which(pred$class=="LWR" & test.set$type=="GCR"))/length(which(test.set$type=="GCR"))
-      lwr_error[s,i] <- length(which(pred$class=="GCR" & test.set$type=="LWR"))/length(which(test.set$type=="LWR"))
+      oob_error[s-3,i] <- length(which((pred$class=="LWR" & test.set$type=="GCR")|(pred$class=="GCR" & test.set$type=="LWR")))/length(pred$class)
+      gcr_error[s-3,i] <- length(which(pred$class=="LWR" & test.set$type=="GCR"))/length(which(test.set$type=="GCR"))
+      lwr_error[s-3,i] <- length(which(pred$class=="GCR" & test.set$type=="LWR"))/length(which(test.set$type=="LWR"))
     }
   }
   oob_list <- rbind(apply(as.matrix(oob_error),1,mean),
@@ -156,10 +150,10 @@ for(count in 1:k){
                     apply(lwr_error,1,sd))
   
   result[[1]] <- rbind(oob_list,gcr_list,lwr_list)
+  result[[2]] <- tunegrid[count,]
   
   #======================
   ## TO CHANGE
-  save(result,file = paste("testadaboost",count,".RData",sep=""))
+  save(result,file = paste("BO_output/boosting_output3_",count,".RData",sep=""))
   #======================
-  }
 }
