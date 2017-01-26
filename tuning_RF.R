@@ -1,6 +1,6 @@
 ## TUNING RANDOM FOREST
 ## NICOLAS LANDRY  created the 23/11/2016
-## LAST MODIFICATION: 01/12/2016
+## LAST MODIFICATION: 11/01/2017
 ##OBJECTIVE: How to improve result from rf?
 
 
@@ -43,16 +43,17 @@ customRF$levels <- function(x) x$classes
 #=============== 4 LOAD OF THE DATASET ===============
 #=====================================================
 cat("load of the dataset \n")
-alldata=read.csv(file="Pris_data_all_with_outages_v05_nl.csv",sep=";")
+alldata=read.csv(file="Pris_data_all_with_outages_v11_nl.csv",sep=";")
 ids=which(alldata$type=="PWR"|alldata$type=="BWR")
 levels(alldata$type)=c(levels(alldata$type),"LWR")
 alldata$type[ids]="LWR"
+ids.japan=which(alldata$country=="JAPAN" & alldata$year>2010)
+alldata=alldata[-ids.japan,]
 
 colnames=c("type","t11","t12","t13","t14","t15","t16","t17","t21","t31","t32","t33","t35","t41","t42","t43")
-#colnames=c("type","t12","t13","t14","t15","t16","t17","t21","t31","t32","t33","t35","t41","t42","t43")
 cnames=which(is.element(colnames(alldata),colnames))
-ids=which(alldata$type=="LWR"|alldata$type=="GCR")
-
+countries=c("FRANCE","GERMANY","JAPAN","SPAIN","SWITZERLAND","UNITED KINGDOM","UNITED STATES OF AMERICA")
+ids=which((alldata$type=="LWR"|alldata$type=="GCR") & alldata$country %in% countries)
 d=alldata[ids,c(cnames)]
 d$type=factor(d$type)
 d=na.omit(d)
@@ -60,13 +61,25 @@ d=na.omit(d)
 #Removal of zero year outages
 S<-rep(0,nrow(d))
 for(i in 1:nrow(d)){
-  S[i]=(sum(d[i,2:(ncol(d)-1)]))
+  S[i]=(sum(d[i,4:(ncol(d)-1)]))
 }
 d<-d[-which(S==0),]
-rm(S)
-rm(i)
-rm(ids)
-rm(cnames)
+
+#normalisation
+for(r in 1:nrow(d)){
+  s=sum(d[r,4:ncol(d)])
+  if(d$year[r] %% 4 ==0){
+    for(c in 4:ncol(d)){
+      d[r,c]=d[r,c]/(8784-s+d[r,c])
+    }
+  }else{
+    for(c in 4:ncol(d)){
+      d[r,c]=d[r,c]/(8760-s+d[r,c])
+    }
+  }
+}
+rm(s,S,i,ids,cnames,ids.japan,countries)
+
 #=====================================================
 #================== 5 ANALYSIS =======================
 #=====================================================
