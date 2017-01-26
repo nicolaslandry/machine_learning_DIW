@@ -51,7 +51,6 @@ ids.bootstrap.do<-function(ratioGT,y,size){
   idsL2<-sample(x = idsL,size = length(idsG),replace = FALSE) # 50/50 sampling
   #idsL2<-sample(x = idsL,size = (1-ratioGT)/ratioGT*length(idsG),replace = FALSE)# ratioGT/(1-ratioGT) sampling
   ids2<-c(idsG2,idsL2)
-  #print(length(idsG2)/length(ids2))
   ids2
 }
 
@@ -172,7 +171,7 @@ for(count in 1:k){
       test.set=d[-ids.train.do,]
       train.set=d[ids.train.do,]
       
-      rf <- randomForest(type~.,data=d,
+      rf <- randomForest(type~.,data=,
                          ntree=rep$.ntree,
                          mtry=rep$.mtry,
                          classwt=c(rep$.classwt+1000,1000-rep$.classwt),
