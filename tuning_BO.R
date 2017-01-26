@@ -1,19 +1,31 @@
 ## TUNING BOOSTING
 ## NICOLAS LANDRY  created the 15/12/2016
-## LAST MODIFICATION: 15/12/2016
+## LAST MODIFICATION: 12/01/2017
 ##OBJECTIVE: How to improve result from bo?
 
 
 rm(list=ls())
+#setwd("H:\\Machine_Learning\\BOOSTING")
+#setwd("/projekte/sseifert/homes/Machine_Learning/BOOSTING")
+
 setwd("H:\\BOOSTING\\")
-SPLIT=1
+
+dir.create("2- RESULTS",showWarnings = FALSE)
+#lib <- .libPaths()
+#.libPaths("/projekte/sseifert/homes/Machine_Learning/packages")
+#install.packages("fastAdaboost",
+#lib="/projekte/sseifert/homes/Machine_Learning",
+#                 repos="http://cran.ms.unimelb.edu.au/",dependencies=TRUE)
 #=====================================================
 #================= 1 LIBRARIES LOAD ==================
 #=====================================================
 library(adabag)
+library(doParallel)
+library(fastAdaboost)
+library(rpart)
 
 #=====================================================
-#=============== 3 FUNCTIONS DECLARATION =============
+#=============== 2 FUNCTIONS DECLARATION =============
 #=====================================================
 ids.bootstrap.up<-function(ids,ratioGT,y){
   idsG<-ids[which(y=="GCR")]
@@ -25,34 +37,33 @@ ids.bootstrap.up<-function(ids,ratioGT,y){
   ids2
 }
 
-ids.bootstrap.do<-function(ratioGT,y,size){
+ids.bootstrap.do<-function(y,ratioGT,size){
   ids <-1:length(y)
   idsG<-ids[which(y=="GCR")]
   idsL<-ids[which(y=="LWR")]
   
-  idsG2<-sample(x = idsG,size = size/2,replace = FALSE)
-  idsL2<-sample(x = idsL,size = size/2,replace = FALSE)
-  print(idsG2)
+  idsG2<-sample(x = idsG,size = ceiling(ratioGT*size),replace = FALSE)
+  #idsL2<-sample(x = idsL,size = length(idsG),replace = FALSE) # 50/50 sampling
+  idsL2<-sample(x = idsL,size = size-ceiling(ratioGT*size),replace = FALSE)# ratioGT/(1-ratioGT) sampling
   ids2<-c(idsG2,idsL2)
-  #print(length(idsG2)/length(ids2))
   ids2
 }
 
 #=====================================================
-#=============== 4 LOAD OF THE DATASET ===============
+#=============== 3 LOAD OF THE DATASET ===============
 #=====================================================
 cat("load of the dataset \n")
-alldata=read.csv(file="prisv11.csv",sep=";")
+alldata=read.csv(file="Pris_data_all_with_outages_v12_nl.csv",sep=";")
 ids=which(alldata$type=="PWR"|alldata$type=="BWR")
 levels(alldata$type)=c(levels(alldata$type),"LWR")
 alldata$type[ids]="LWR"
 ids.japan=which(alldata$country=="JAPAN" & alldata$year>2010)
 alldata=alldata[-ids.japan,]
 
-colnames=c("type","t11","t12","t13","t14","t15","t16","t17","t21","t31","t32","t33","t35","t41","t42","t43")
+colnames=c("type","year","planned_outages","t11","t12","t13","t14","t15","t16","t17","t21","t31","t32","t33","t35","t41","t42","t43")
 cnames=which(is.element(colnames(alldata),colnames))
-ids=which(alldata$type=="LWR"|alldata$type=="GCR")
-
+countries=c("FRANCE","GERMANY","JAPAN","SPAIN","SWITZERLAND","UNITED KINGDOM","UNITED STATES OF AMERICA")
+ids=which((alldata$type=="LWR"|alldata$type=="GCR") & alldata$country %in% countries)
 d=alldata[ids,c(cnames)]
 d$type=factor(d$type)
 d=na.omit(d)
@@ -60,63 +71,101 @@ d=na.omit(d)
 #Removal of zero year outages
 S<-rep(0,nrow(d))
 for(i in 1:nrow(d)){
-  S[i]=(sum(d[i,2:(ncol(d)-1)]))
+  S[i]=(sum(d[i,4:(ncol(d)-1)]))
 }
 d<-d[-which(S==0),]
-rm(S)
-rm(i)
-rm(ids)
-rm(cnames)
-rm(ids.japan)
+
+#normalisation
+for(r in 1:nrow(d)){
+  s=sum(d[r,4:ncol(d)])
+  if(d$year[r] %% 4 ==0){
+    for(c in 4:ncol(d)){
+      d[r,c]=d[r,c]/(8784-s+d[r,c])
+    }
+  }else{
+    for(c in 4:ncol(d)){
+      d[r,c]=d[r,c]/(8760-s+d[r,c])
+    }
+  }
+}
+d<-d[,-c(1,3)]
+rm(c,r,s,S,i,ids,cnames,ids.japan,countries)
+
 #=====================================================
-#================== 5 ANALYSIS =======================
+#================== 4 ANALYSIS =======================
 #=====================================================
 
-#PARALLEL PROCESSING		
-max_cores <- detectCores()[1]		
-max_cores		
-if (max_cores > 25) max_cores <- 25		
-cl <- makeCluster(max_cores, homogeneous=T)		
+#PARALLEL PROCESSING
+max_cores <- detectCores()[1]
+max_cores
+if (max_cores > 25) max_cores <- 7
+cl <- makeCluster(max_cores, homogeneous=T)
 registerDoParallel(cl)
 
 seed=7
 set.seed(seed)
 
-#### WITH FOREACH LOOP
-tunegrid <- expand.grid(.minsplit=seq(3,100,20),
+tunegrid.up <- expand.grid(.minsplit=c(3,6,9),
                         .minbucket=seq(1,20,5),
-                        .cp=c(0.001,0.01,0.1),
-                        .tsetsize=seq(100,1100,100),
-                        .ratio=0.5,
-                        .coeflearn=c("Breiman","Freund"))
-j <- nrow(tunegrid)
+                        .cp=c(0.01,0.05,0.1),
+                        .tsetsize=c(300,600,900,1200),
+                        .ratio=c(0.5,0.6),
+                        .coeflearn=c("Breiman"),
+                        .up=c(TRUE))
+tunegrid.do <- expand.grid(.minsplit=c(3,6,9),
+                           .minbucket=seq(1,20,5),
+                           .cp=c(0.01,0.05,0.1),
+                           .tsetsize=c(50,100,150,200),
+                           .ratio=c(0.5,0.6),
+                           .coeflearn=c("Breiman"),
+                           .up=c(FALSE))
+tunegrid.do <- tunegrid.do[(tunegrid.do$.ratio*tunegrid.do$.tsetsize)<sum(d$type=="GCR"),]
+tunegrid <- rbind(tunegrid.up,tunegrid.do)
+k <- nrow(tunegrid)
 
-tunegrid <- tunegrid[((SPLIT-1)*j/6+1):(SPLIT*j/6),]
 
-k=nrow(tunegrid)
+rm(tunegrid.do,tunegrid.up)
 
-result=list()
 
-for(count in 1:k){
-  print(count)
+
+
+#foreach(count=1:k, .packages=c("adabag","fastAdaboost","rpart"))%dopar%{
+for(count in 1:k)  {
+  result<-list()
   rep     <- tunegrid[count,]
   
   control <- rpart.control(minsplit = rep$.minsplit,
                            minbucket = rep$.minbucket,
                            cp = rep$.cp)
   
-  oob_error <- matrix(NA, nrow=5,ncol=30)
-  gcr_error <- matrix(NA, nrow=5,ncol=30)
-  lwr_error <- matrix(NA, nrow=5,ncol=30)
+  oob_error <- matrix(NA, nrow=12,ncol=30); 
+  rownames(oob_error)=c("5trees","10trees","15trees","20trees","25trees","30trees","35trees","40trees","45trees","50trees","55trees","60trees")
+  gcr_error <- matrix(NA, nrow=12,ncol=30); 
+  rownames(oob_error)=c("5trees","10trees","15trees","20trees","25trees","30trees","35trees","40trees","45trees","50trees","55trees","60trees")
+  lwr_error <- matrix(NA, nrow=12,ncol=30); 
+  rownames(oob_error)=c("5trees","10trees","15trees","20trees","25trees","30trees","35trees","40trees","45trees","50trees","55trees","60trees")
   
   for (i in 1:30){
-    ids.train=sample(1:nrow(d),size = rep$.tsetsize,replace = F)
-    ids.train.up=ids.bootstrap.up(ids.train,d$type[ids.train],ratioGT = rep$.ratio)
-    test.set=d[-ids.train.up,]
-    train.set=d[ids.train.up,]
-    bo <-boosting(type~., data=train.set,mfinal=100,coeflearn = rep$.coeflearn,control = control)
-    for(s in 1:5){
-      pred=predict(bo,test.set,type = "class",newmfinal = 20*s)
+    print(paste(count,",",i))
+    error=1
+    while(error==1){
+      ids.train=sample(1:nrow(d),size = rep$.tsetsize,replace = F)
+      if(length(which(d$type[ids.train]=="GCR"))>0) error =0
+    }
+    if(rep$.up){    
+      ids.train.up=ids.bootstrap.up(ids.train,d$type[ids.train],ratioGT = rep$.ratio)
+      test.set=d[-ids.train.up,]
+      train.set=d[ids.train.up,]
+    }else{
+      ids.train.do=ids.bootstrap.do(d$type,ratioGT = rep$.ratio, size=rep$.tsetsize)
+      test.set=d[-ids.train.do,]
+      train.set=d[ids.train.do,]
+    }
+    #bo <-boosting(type~., data=train.set,mfinal=60, coeflearn = rep$.coeflearn,control = control)
+    for(s in 12:12){
+      bo <-adaboost(type~., data=train.set,nIter=5*s, coeflearn = rep$.coeflearn,control = control)
+      pred=predict(bo,test.set,type = "class")
+      #pred=predict(bo,test.set,newmfinal=5*s,type = "class")
       oob_error[s,i] <- length(which((pred$class=="LWR" & test.set$type=="GCR")|(pred$class=="GCR" & test.set$type=="LWR")))/length(pred$class)
       gcr_error[s,i] <- length(which(pred$class=="LWR" & test.set$type=="GCR"))/length(which(test.set$type=="GCR"))
       lwr_error[s,i] <- length(which(pred$class=="GCR" & test.set$type=="LWR"))/length(which(test.set$type=="LWR"))
@@ -129,11 +178,11 @@ for(count in 1:k){
   lwr_list <- rbind(apply(lwr_error,1,mean),
                     apply(lwr_error,1,sd))
   
-  result[[count]] <- rbind(oob_list,gcr_list,lwr_list)
+  result[[1]] <- rbind(oob_list,gcr_list,lwr_list)
+  result[[2]] <- tunegrid[count,]
+  
+  #======================
+  ## TO CHANGE
+  save(result,file = paste("2- RESULTS/BO_output_",count,".RData",sep=""))
+  #======================
 }
-
-save(result, file = paste("boosting_output_",SPLIT,".RData"))
-
-
-
-
