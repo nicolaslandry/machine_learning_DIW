@@ -5,10 +5,10 @@
 
 
 rm(list=ls())
-#setwd("H:\\Machine_Learning\\")
-#setwd("/projekte/sseifert/homes/Machine_Learning")
+#setwd("H:\\Machine_Learning\\BOOSTING")
+setwd("/projekte/sseifert/homes/Machine_Learning/BOOSTING")
 
-setwd("H:\\BOOSTING\\")
+#setwd("H:\\BOOSTING\\")
 
 dir.create("2- RESULTS",showWarnings = FALSE)
 #lib <- .libPaths()
@@ -137,9 +137,12 @@ foreach(count=1:k, .packages=c("adabag","fastAdaboost","rpart"))%dopar%{
                            minbucket = rep$.minbucket,
                            cp = rep$.cp)
   
-  oob_error <- matrix(NA, nrow=6,ncol=30); rownames(oob_error)=c("10trees","20trees","30trees","40trees","50trees","60trees")
-  gcr_error <- matrix(NA, nrow=6,ncol=30); rownames(oob_error)=c("10trees","20trees","30trees","40trees","50trees","60trees")
-  lwr_error <- matrix(NA, nrow=6,ncol=30); rownames(oob_error)=c("10trees","20trees","30trees","40trees","50trees","60trees")
+  oob_error <- matrix(NA, nrow=12,ncol=30); 
+  rownames(oob_error)=c("5trees","10trees","15trees","20trees","25trees","30trees","35trees","40trees","45trees","50trees","55trees","60trees")
+  gcr_error <- matrix(NA, nrow=12,ncol=30); 
+  rownames(oob_error)=c("5trees","10trees","15trees","20trees","25trees","30trees","35trees","40trees","45trees","50trees","55trees","60trees")
+  lwr_error <- matrix(NA, nrow=12,ncol=30); 
+  rownames(oob_error)=c("5trees","10trees","15trees","20trees","25trees","30trees","35trees","40trees","45trees","50trees","55trees","60trees")
   
   for (i in 1:30){
     print(paste(count,",",i))
@@ -158,10 +161,10 @@ foreach(count=1:k, .packages=c("adabag","fastAdaboost","rpart"))%dopar%{
       train.set=d[ids.train.do,]
     }
     bo <-boosting(type~., data=train.set,mfinal=60, coeflearn = rep$.coeflearn,control = control)
-    for(s in 1:6){
+    for(s in 1:12){
       #bo <-adaboost(type~., data=train.set,nIter=10*s, coeflearn = rep$.coeflearn,control = control)
       #pred=predict(bo,test.set,type = "class")
-      pred=predict(bo,test.set,newmfinal=10*s,type = "class")
+      pred=predict(bo,test.set,newmfinal=5*s,type = "class")
       oob_error[s,i] <- length(which((pred$class=="LWR" & test.set$type=="GCR")|(pred$class=="GCR" & test.set$type=="LWR")))/length(pred$class)
       gcr_error[s,i] <- length(which(pred$class=="LWR" & test.set$type=="GCR"))/length(which(test.set$type=="GCR"))
       lwr_error[s,i] <- length(which(pred$class=="GCR" & test.set$type=="LWR"))/length(which(test.set$type=="LWR"))
