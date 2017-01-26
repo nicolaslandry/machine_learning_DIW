@@ -17,7 +17,7 @@ setwd("H:\\BOOSTING\\")
 #=====================================================
 #================= 1 LIBRARIES LOAD ==================
 #=====================================================
-#library(adabag)
+library(adabag)
 library(doParallel)
 library(fastAdaboost)
 library(rpart)
@@ -52,14 +52,14 @@ ids.bootstrap.do<-function(ratioGT,y,size){
 #=============== 3 LOAD OF THE DATASET ===============
 #=====================================================
 cat("load of the dataset \n")
-alldata=read.csv(file="Pris_data_all_with_outages_v11_nl.csv",sep=";")
+alldata=read.csv(file="Pris_data_all_with_outages_v12_nl.csv",sep=";")
 ids=which(alldata$type=="PWR"|alldata$type=="BWR")
 levels(alldata$type)=c(levels(alldata$type),"LWR")
 alldata$type[ids]="LWR"
 ids.japan=which(alldata$country=="JAPAN" & alldata$year>2010)
 alldata=alldata[-ids.japan,]
 
-colnames=c("type","t11","t12","t13","t14","t15","t16","t17","t21","t31","t32","t33","t35","t41","t42","t43")
+colnames=c("type","year","planned_outages","t11","t12","t13","t14","t15","t16","t17","t21","t31","t32","t33","t35","t41","t42","t43")
 cnames=which(is.element(colnames(alldata),colnames))
 countries=c("FRANCE","GERMANY","JAPAN","SPAIN","SWITZERLAND","UNITED KINGDOM","UNITED STATES OF AMERICA")
 ids=which((alldata$type=="LWR"|alldata$type=="GCR") & alldata$country %in% countries)
@@ -70,10 +70,25 @@ d=na.omit(d)
 #Removal of zero year outages
 S<-rep(0,nrow(d))
 for(i in 1:nrow(d)){
-  S[i]=(sum(d[i,2:(ncol(d)-1)]))
+  S[i]=(sum(d[i,4:(ncol(d)-1)]))
 }
 d<-d[-which(S==0),]
-rm(S,i,ids,cnames,ids.japan,countries)
+
+#normalisation
+for(r in 1:nrow(d)){
+  s=sum(d[r,4:ncol(d)])
+  if(d$year[r] %% 4 ==0){
+    for(c in 4:ncol(d)){
+      d[r,c]=d[r,c]/(8784-s+d[r,c])
+    }
+  }else{
+    for(c in 4:ncol(d)){
+      d[r,c]=d[r,c]/(8760-s+d[r,c])
+    }
+  }
+}
+d<-d[,-c(1,3)]
+rm(s,S,i,ids,cnames,ids.japan,countries)
 
 #=====================================================
 #================== 4 ANALYSIS =======================
@@ -104,8 +119,7 @@ k <- nrow(tunegrid)
 
 
 
-
-foreach(count=1:k, .packages=c("fastAdaboost","rpart"))%dopar%{
+foreach(count=1:k, .packages=c("adabag","fastAdaboost","rpart"))%dopar%{
   result<-list()
   rep     <- tunegrid[count,]
   
@@ -113,9 +127,9 @@ foreach(count=1:k, .packages=c("fastAdaboost","rpart"))%dopar%{
                            minbucket = rep$.minbucket,
                            cp = rep$.cp)
   
-  oob_error <- matrix(NA, nrow=3,ncol=30); rownames(oob_error)=c("40trees","50trees","60trees")
-  gcr_error <- matrix(NA, nrow=3,ncol=30); rownames(oob_error)=c("40trees","50trees","60trees")
-  lwr_error <- matrix(NA, nrow=3,ncol=30); rownames(oob_error)=c("40trees","50trees","60trees")
+  oob_error <- matrix(NA, nrow=6,ncol=30); rownames(oob_error)=c("10trees","20trees","30trees","40trees","50trees","60trees")
+  gcr_error <- matrix(NA, nrow=6,ncol=30); rownames(oob_error)=c("10trees","20trees","30trees","40trees","50trees","60trees")
+  lwr_error <- matrix(NA, nrow=6,ncol=30); rownames(oob_error)=c("10trees","20trees","30trees","40trees","50trees","60trees")
   
   for (i in 1:30){
     print(paste(count,",",i))
@@ -134,12 +148,14 @@ foreach(count=1:k, .packages=c("fastAdaboost","rpart"))%dopar%{
       test.set=d[-ids.train.do,]
       train.set=d[ids.train.do,]
     }
-    for(s in 4:6){
-      bo <-adaboost(type~., data=train.set,nIter=10*s, coeflearn = rep$.coeflearn,control = control)
-      pred=predict(bo,test.set,type = "class")
-      oob_error[s-3,i] <- length(which((pred$class=="LWR" & test.set$type=="GCR")|(pred$class=="GCR" & test.set$type=="LWR")))/length(pred$class)
-      gcr_error[s-3,i] <- length(which(pred$class=="LWR" & test.set$type=="GCR"))/length(which(test.set$type=="GCR"))
-      lwr_error[s-3,i] <- length(which(pred$class=="GCR" & test.set$type=="LWR"))/length(which(test.set$type=="LWR"))
+    bo <-boosting(type~., data=train.set,mfinal=60, coeflearn = rep$.coeflearn,control = control)
+    for(s in 1:6){
+      #bo <-adaboost(type~., data=train.set,nIter=10*s, coeflearn = rep$.coeflearn,control = control)
+      #pred=predict(bo,test.set,type = "class")
+      pred=predict(bo,test.set,newmfinal=10*s,type = "class")
+      oob_error[s,i] <- length(which((pred$class=="LWR" & test.set$type=="GCR")|(pred$class=="GCR" & test.set$type=="LWR")))/length(pred$class)
+      gcr_error[s,i] <- length(which(pred$class=="LWR" & test.set$type=="GCR"))/length(which(test.set$type=="GCR"))
+      lwr_error[s,i] <- length(which(pred$class=="GCR" & test.set$type=="LWR"))/length(which(test.set$type=="LWR"))
     }
   }
   oob_list <- rbind(apply(as.matrix(oob_error),1,mean),
