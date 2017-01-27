@@ -11,7 +11,11 @@ ids.bootstrap.up<-function(ids,ratioGT,y){
   idsG<-ids[which(y=="GCR")]
   idsL<-ids[which(y=="LWR")]
   nLWR<-length(idsL)
-  idsG2<-sample(x = idsG,size = (ratioGT/(1-ratioGT))*nLWR,replace = TRUE)
+  if(length(idsG)>1){
+    idsG2<-sample(x = idsG,size = (ratioGT/(1-ratioGT))*nLWR,replace = TRUE)
+  }else{
+    idsG2=rep(idsG,(ratioGT/(1-ratioGT))*nLWR)
+  }
   ids2<-c(idsG2,idsL)
   #print(length(idsG2)/length(ids2))
   ids2
@@ -48,8 +52,8 @@ train_test_sets<-function(d,rep){
     ids.train=sample(1:nrow(d),size = rep$.tsetsize,replace = F)
     if(length(which(d$type[ids.train]=="GCR"))>0) error =0
   }
-  if(rep$.up){    
-    ids.train.up=ids.bootstrap.up(ids.train,d$type[ids.train],ratioGT = rep$.ratio)
+  if(rep$.up){
+    ids.train.up=ids.bootstrap.up(ids.train,y=d$type[ids.train],ratioGT = rep$.ratio)
     test.set=d[-ids.train.up,]
     train.set=d[ids.train.up,]
   }else{
@@ -61,21 +65,42 @@ train_test_sets<-function(d,rep){
 }
 
 
-error_TOT<-function(pred,test){
-  return(length(which((pred=="LWR" & test=="GCR")|(pred=="GCR" & test=="LWR")))/length(pred)) 
+error_TOT<-function(pred,test,opt_t=NA){
+  if(is.na(opt_t)){
+    return(length(which((pred=="LWR" & test=="GCR")|(pred=="GCR" & test=="LWR")))/length(pred)) 
+  }else{
+    return(length(which((pred>opt_t & test=="GCR")|(pred<opt_t & test=="LWR")))/length(pred)) 
+  }
 }
 
-error_GCR<-function(pred,test){
-  return(length(which(pred=="LWR" & test=="GCR"))/length(which(test=="GCR")))
+error_GCR<-function(pred,test,opt_t=NA){
+  if(is.na(opt_t)){
+    return(length(which(pred=="LWR" & test=="GCR"))/length(which(test=="GCR")))
+  }else{
+    return(length(which(pred>opt_t & test=="GCR"))/length(which(test=="GCR"))) 
+  }
 }
 
-error_LWR<-function(pred,test){
-  return(length(which(pred=="GCR" & test=="LWR"))/length(which(test=="LWR")))
+error_LWR<-function(pred,test,opt_t=NA){
+  if(is.na(opt_t)){
+    return(length(which(pred=="GCR" & test=="LWR"))/length(which(test=="LWR")))
+  }else{
+    return(length(which(pred<opt_t & test=="LWR"))/length(which(test=="LWR"))) 
+  }
 }
 
 error_stat<-function(M){
   return(rbind(apply(M,1,mean),apply(M,1,sd)))
 }
+
+opt_t<-function(pred,test){
+  analysis <- roc(response=test$type, predictor=pred)
+  e <- cbind(analysis$thresholds,analysis$sensitivities*analysis$specificities)
+  opt_t <- subset(e,e[,2]==max(e[,2]))[1,1]
+  return(opt_t)
+}
+
+
 #=====================================================
 #=============== 2 LOAD OF THE DATASET ===============
 #=====================================================
