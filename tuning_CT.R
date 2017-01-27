@@ -5,9 +5,12 @@
 
 
 rm(list=ls())
+
+PARALLEL=FALSE
+THRESHOLD=TRUE
 #setwd("H:\\Machine_Learning\\")
 #setwd("/projekte/sseifert/homes/Machine_Learning")
-
+dir.create("H:\\CLASSIFICATION\\",showWarnings = FALSE)
 setwd("H:\\CLASSIFICATION\\")
 dir.create("2- RESULTS",showWarnings = FALSE)
 #=====================================================
@@ -17,86 +20,14 @@ library(rpart)
 library(pROC)
 
 #=====================================================
-#=============== 2 FUNCTIONS DECLARATION =============
+#================= 2 INITIALIZATION ==================
 #=====================================================
-ids.bootstrap.up<-function(ids,ratioGT,y){
-  idsG<-ids[which(y=="GCR")]
-  idsL<-ids[which(y=="LWR")]
-  nLWR<-length(idsL)
-  idsG2<-sample(x = idsG,size = (ratioGT/(1-ratioGT))*nLWR,replace = TRUE)
-  ids2<-c(idsG2,idsL)
-  #print(length(idsG2)/length(ids2))
-  ids2
-}
-
-ids.bootstrap.do<-function(ratioGT,y,size){
-  ids <-1:length(y)
-  idsG<-ids[which(y=="GCR")]
-  idsL<-ids[which(y=="LWR")]
-  
-  idsG2<-sample(x = idsG,size = size/2,replace = FALSE)
-  idsL2<-sample(x = idsL,size = size/2,replace = FALSE)
-  print(idsG2)
-  ids2<-c(idsG2,idsL2)
-  #print(length(idsG2)/length(ids2))
-  ids2
-}
-
+source("C:/Users/nlandry/Documents/Nicolas/05-Outages - with Stephan/R-codes/tuning_dataset.R")
 #=====================================================
-#=============== 3 LOAD OF THE DATASET ===============
+#================== 3 ANALYSIS =======================
 #=====================================================
-cat("load of the dataset \n")
-alldata=read.csv(file="Pris_data_all_with_outages_v12_nl.csv",sep=";")
-ids=which(alldata$type=="PWR"|alldata$type=="BWR")
-levels(alldata$type)=c(levels(alldata$type),"LWR")
-alldata$type[ids]="LWR"
-ids.japan=which(alldata$country=="JAPAN" & alldata$year>2010)
-alldata=alldata[-ids.japan,]
-
-colnames=c("type","year","planned_outages","t11","t12","t13","t14","t15","t16","t17","t21","t31","t32","t33","t35","t41","t42","t43")
-cnames=which(is.element(colnames(alldata),colnames))
-countries=c("FRANCE","GERMANY","JAPAN","SPAIN","SWITZERLAND","UNITED KINGDOM","UNITED STATES OF AMERICA")
-ids=which((alldata$type=="LWR"|alldata$type=="GCR") & alldata$country %in% countries)
-d=alldata[ids,c(cnames)]
-d$type=factor(d$type)
-d=na.omit(d)
-
-#Removal of zero year outages
-S<-rep(0,nrow(d))
-for(i in 1:nrow(d)){
-  S[i]=(sum(d[i,4:(ncol(d)-1)]))
-}
-d<-d[-which(S==0),]
-
-#normalisation
-for(r in 1:nrow(d)){
-  s=sum(d[r,4:ncol(d)])
-  if(d$year[r] %% 4 ==0){
-    for(c in 4:ncol(d)){
-      d[r,c]=d[r,c]/(8784-s+d[r,c])
-      if(d[r,c]=="NaN"){d[r,c] <-      0} 
-    }
-  }else{
-    for(c in 4:ncol(d)){
-      d[r,c]=d[r,c]/(8760-s+d[r,c])
-      if(d[r,c]=="NaN"){d[r,c] <-      0} 
-    }
-  }
-}
-
-d<-d[,-c(1,3)]
-rm(s,S,i,ids,cnames,ids.japan,countries,c,r)
-
-#=====================================================
-#================== 4 ANALYSIS =======================
-#=====================================================
-
 #PARALLEL PROCESSING
-max_cores <- detectCores()[1]
-max_cores
-if (max_cores > 25) max_cores <- 7
-cl <- makeCluster(max_cores, homogeneous=T)
-registerDoParallel(cl)
+if(PARALLEL) activate_parallel_mode(cores_limit = 7)
 
 seed=7
 set.seed(seed)
@@ -114,67 +45,54 @@ tunegrid.do <- expand.grid(.minsplit=seq(3,40,2),
                            .ratio=0.5,
                            .up=FALSE)
 tunegrid=rbind(tunegrid.up,tunegrid.do)
-rm(tunegrid.do,tunegrid.up)
 k <- nrow(tunegrid)
+
+rm(tunegrid.do,tunegrid.up)
+
 
 
 #foreach(count=1:k, .packages=c("randomForest","rpart"))%dopar%{
-for(count in 1:k){
+for(count in 25:k){
+  print(count)
   result<-list()
-  rep     <- tunegrid[count,]
+  param     <- tunegrid[count,]
   
-  control <- rpart.control(minsplit = rep$.minsplit,
-                           minbucket = rep$.minbucket,
-                           cp = rep$.cp)
+  control <- rpart.control(minsplit = param$.minsplit,
+                           minbucket = param$.minbucket,
+                           cp = param$.cp)
   
-  oob_error <- matrix(NA, nrow=1,ncol=30)
-  gcr_error <- matrix(NA, nrow=1,ncol=30)
-  lwr_error <- matrix(NA, nrow=1,ncol=30)
+  ntrees=c(1)
+  list2env(error_matrices(length(ntrees),30,ntrees),env=environment())   #error matrices
   
   for (i in 1:30){
-    print(paste(count,",",i))
-    error=1
-    while(error==1){
-      ids.train=sample(1:nrow(d),size = rep$.tsetsize,replace = F)
-      if(length(which(d$type[ids.train]=="GCR"))>0) error =0
+
+    sets<-train_test_sets(d,param) # train and test sets
+
+    ct <- rpart(type~., data=sets$train, control = control)
+
+    # optimal threshold to split
+    Opt_t=NA
+    if(THRESHOLD){
+      pred=predict(ct,sets$train,type = "prob")
+      Opt_t<-opt_t(pred[,1],sets$train)
+      
+      pred=predict(ct,sets$test,type = "prob")
+      pred=pred[,2]
+    } else{
+      pred=predict(ct,sets$test,type = "class")
     }
-    print("GCRs in the training set")
-    if(rep$.up){    
-      ids.train.up=ids.bootstrap.up(ids.train,d$type[ids.train],ratioGT = rep$.ratio)
-      test.set=d[-ids.train.up,]
-      train.set=d[ids.train.up,]
-    }else{
-      ids.train.do=ids.bootstrap.do(d$type,ratioGT = rep$.ratio, size=rep$.tsetsize)
-      test.set=d[-ids.train.do,]
-      train.set=d[ids.train.do,]
-    }
-    
-    ct <- rpart(type~., data=train.set, control = control)
-    pred=predict(ct,test.set,type = "class")
-    
-    # optimal t to split
-    analysis <- roc(response=test.set$type, predictor=pred)
-    e <- cbind(analysis$thresholds,analysis$sensitivities*analysis$specificities)
-    opt_t <- subset(e,e[,2]==max(e[,2]))[,1]
-    
-    oob_error[1,i] <- length(which((pred>opt_t & test.set$type=="GCR")|(pred<opt_t & test.set$type=="LWR")))/length(pred)
-    gcr_error[1,i] <- length(which(pred>opt_t & test.set$type=="GCR"))/length(which(test.set$type=="GCR"))
-    lwr_error[1,i] <- length(which(pred<opt_t & test.set$type=="LWR"))/length(which(test.set$type=="LWR"))
-    
-    #oob_error[1,i] <- length(which((pred=="LWR" & test.set$type=="GCR")|(pred=="GCR" & test.set$type=="LWR")))/length(pred)
-    #gcr_error[1,i] <- length(which(pred=="LWR" & test.set$type=="GCR"))/length(which(test.set$type=="GCR"))
-    #lwr_error[1,i] <- length(which(pred=="GCR" & test.set$type=="LWR"))/length(which(test.set$type=="LWR"))
+
+    tot_error[1,i] <- error_TOT(pred,sets$test$type,Opt_t)
+    gcr_error[1,i] <- error_GCR(pred,sets$test$type,Opt_t)
+    lwr_error[1,i] <- error_LWR(pred,sets$test$type,Opt_t)
+
   }
   
-  oob_list <- rbind(apply(as.matrix(oob_error),1,mean),
-                    apply(as.matrix(oob_error),1,sd))
-  gcr_list <- rbind(apply(gcr_error,1,mean),
-                    apply(gcr_error,1,sd))
-  lwr_list <- rbind(apply(lwr_error,1,mean),
-                    apply(lwr_error,1,sd))
+  tot_stat <- error_stat(tot_error)
+  gcr_stat <- error_stat(gcr_error)
+  lwr_stat <- error_stat(lwr_error)
   
-  result[[1]] <- rbind(oob_list,gcr_list,lwr_list)
-  result[[2]] <- tunegrid[count,]
+  result <- list(rbind(tot_stat,gcr_stat,lwr_stat),param)
   
   #======================
   ## TO CHANGE
